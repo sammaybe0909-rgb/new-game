@@ -1,0 +1,1973 @@
+import random
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+
+# =========================================================
+# BIOCARD GAME — COMPLETE ONE-FILE VERSION
+#
+# TURN ORDER
+# 1. A stage-based dilemma appears.
+# 2. Draw one card from a standard 52-card deck.
+# 3. Choose one plant card:
+#       Switchgrass / Poplar Trees / Corn Stover
+# 4. Resolve tree gain or loss.
+# 5. After all dilemmas for the turn, roll the production die.
+# 6. The die adds or removes trees based on the final plant chosen.
+# 7. Advance only if the station's tree requirement is met.
+#
+# DIFFICULTY
+# Easy   = major dilemma every 2 turns
+# Medium = 1 dilemma every turn
+# Hard   = 2 dilemmas every turn
+#
+# ONLY RESOURCE TRACKED: TREES
+# =========================================================
+
+
+# ---------------------------------------------------------
+# BASIC GAME DATA
+# ---------------------------------------------------------
+
+STATIONS = [
+    "Farm",
+    "Stage 1",
+    "Stage 2",
+    "Harvest",
+    "Transportation",
+    "Biorefinery",
+]
+
+FARMS = {
+    "Pacific Northwest Farm": {
+        "resists": ["Wildfire"],
+        "description": "Reduces wildfire losses by 2 trees.",
+    },
+    "Midwest Farm": {
+        "resists": ["Tornado", "Blizzard"],
+        "description": "Reduces tornado and blizzard losses by 2 trees.",
+    },
+    "Western Farm": {
+        "resists": ["Drought", "Heat Wave"],
+        "description": "Reduces drought and heat-wave losses by 2 trees.",
+    },
+    "Southern Farm": {
+        "resists": ["Flood", "Hurricane"],
+        "description": "Reduces flood and hurricane losses by 2 trees.",
+    },
+}
+
+DIFFICULTIES = {
+    "Easy": {
+        "starting_trees": 10,
+        "turn_limit": 18,
+        "required_trees": 20,
+        "failed_turn_limit": 4,
+        "event_every": 2,
+        "event_count": 1,
+        "description": (
+            "10 starting trees. One major dilemma every two turns. "
+            "18-turn limit. Lower tree requirements for advancement."
+        ),
+    },
+    "Medium": {
+        "starting_trees": 8,
+        "turn_limit": 14,
+        "required_trees": 24,
+        "failed_turn_limit": 3,
+        "event_every": 1,
+        "event_count": 1,
+        "description": (
+            "8 starting trees. One dilemma every turn. "
+            "14-turn limit. Moderate tree requirements for advancement."
+        ),
+    },
+    "Hard": {
+        "starting_trees": 7,
+        "turn_limit": 11,
+        "required_trees": 28,
+        "failed_turn_limit": 2,
+        "event_every": 1,
+        "event_count": 2,
+        "description": (
+            "7 starting trees. Two dilemmas every turn. "
+            "11-turn limit. High tree requirements for advancement."
+        ),
+    },
+}
+
+
+ADVANCE_REQUIREMENTS = {
+    "Easy": {
+        "Farm": 10,
+        "Stage 1": 12,
+        "Stage 2": 14,
+        "Harvest": 16,
+        "Transportation": 18,
+        "Biorefinery": 20,
+    },
+    "Medium": {
+        "Farm": 10,
+        "Stage 1": 13,
+        "Stage 2": 16,
+        "Harvest": 19,
+        "Transportation": 22,
+        "Biorefinery": 24,
+    },
+    "Hard": {
+        "Farm": 10,
+        "Stage 1": 14,
+        "Stage 2": 18,
+        "Harvest": 22,
+        "Transportation": 26,
+        "Biorefinery": 28,
+    },
+}
+
+
+DICE_YIELDS = {
+    "Switchgrass": {
+        1: 0,
+        2: 0,
+        3: 1,
+        4: 1,
+        5: 2,
+        6: 2,
+    },
+    "Poplar Trees": {
+        1: -2,
+        2: -1,
+        3: 1,
+        4: 1,
+        5: 3,
+        6: 4,
+    },
+    "Corn Stover": {
+        1: -2,
+        2: 0,
+        3: 2,
+        4: 2,
+        5: 3,
+        6: 3,
+    },
+}
+
+
+PLANTS = {
+    "Switchgrass": {
+        "icon": "SW",
+        "summary": "Reliable and resilient",
+        "details": "Reduces negative results by 1 tree.",
+    },
+    "Poplar Trees": {
+        "icon": "PT",
+        "summary": "Slow start, stronger later",
+        "details": "First use gets -1; later uses earn a growing bonus.",
+    },
+    "Corn Stover": {
+        "icon": "CS",
+        "summary": "Strong early, weaker later",
+        "details": "First use gets +2, second +1, then repeated use declines.",
+    },
+}
+
+SUITS = ["Hearts", "Diamonds", "Clubs", "Spades"]
+
+SUIT_SYMBOLS = {
+    "Hearts": "♥",
+    "Diamonds": "♦",
+    "Clubs": "♣",
+    "Spades": "♠",
+}
+
+RANKS = [
+    "Ace", "2", "3", "4", "5", "6", "7",
+    "8", "9", "10", "Jack", "Queen", "King",
+]
+
+
+# ---------------------------------------------------------
+# DILEMMAS
+# ---------------------------------------------------------
+
+NORMAL_CONDITIONS = {
+    "name": "Normal Growing Conditions",
+    "description": (
+        "No major disaster occurs this turn. Choose which feedstock "
+        "you want to develop while conditions are stable."
+    ),
+    "outcomes": {
+        "Switchgrass": 2,
+        "Poplar Trees": 2,
+        "Corn Stover": 3,
+    },
+    "lesson": (
+        "Different biomass feedstocks balance reliability, establishment "
+        "time, and short-term availability."
+    ),
+}
+
+DILEMMAS = {
+    "Farm": [
+        {
+            "name": "Drought",
+            "description": "Low rainfall threatens establishment of the first crop.",
+            "outcomes": {
+                "Switchgrass": 1,
+                "Poplar Trees": -2,
+                "Corn Stover": -2,
+            },
+            "lesson": (
+                "Perennial grasses can tolerate dry conditions better than "
+                "newly established trees or annual-crop systems."
+            ),
+        },
+        {
+            "name": "Flood",
+            "description": "Heavy rain saturates the fields and delays planting.",
+            "outcomes": {
+                "Switchgrass": 0,
+                "Poplar Trees": 1,
+                "Corn Stover": -2,
+            },
+            "lesson": (
+                "Flooding can delay field operations and reduce annual crop yield."
+            ),
+        },
+        {
+            "name": "Tornado",
+            "description": "A tornado damages newly prepared farm areas.",
+            "outcomes": {
+                "Switchgrass": -1,
+                "Poplar Trees": -2,
+                "Corn Stover": -2,
+            },
+            "lesson": (
+                "Extreme weather can damage standing biomass and farm infrastructure."
+            ),
+        },
+    ],
+    "Stage 1": [
+        {
+            "name": "Heat Wave",
+            "description": "Extreme temperatures stress the growing feedstock.",
+            "outcomes": {
+                "Switchgrass": 1,
+                "Poplar Trees": -1,
+                "Corn Stover": -2,
+            },
+            "lesson": (
+                "Heat stress affects crops differently depending on species "
+                "and growth stage."
+            ),
+        },
+        {
+            "name": "Invasive Species",
+            "description": "A pest begins damaging the biomass crop.",
+            "outcomes": {
+                "Switchgrass": 0,
+                "Poplar Trees": -2,
+                "Corn Stover": -1,
+            },
+            "lesson": (
+                "Feedstock diversity reduces the chance that one pest harms "
+                "the entire biomass supply."
+            ),
+        },
+        {
+            "name": "Excellent Rainfall",
+            "description": "Moderate temperatures and steady rainfall improve growth.",
+            "outcomes": {
+                "Switchgrass": 2,
+                "Poplar Trees": 3,
+                "Corn Stover": 3,
+            },
+            "lesson": (
+                "Favorable weather can improve biomass yield across several feedstocks."
+            ),
+        },
+    ],
+    "Stage 2": [
+        {
+            "name": "Wildfire",
+            "description": "A wildfire threatens the available biomass.",
+            "outcomes": {
+                "Switchgrass": -1,
+                "Poplar Trees": -4,
+                "Corn Stover": -2,
+            },
+            "lesson": (
+                "Woody feedstocks may store more standing biomass, but that biomass "
+                "can also be exposed to wildfire."
+            ),
+        },
+        {
+            "name": "Blizzard",
+            "description": "Freezing temperatures interrupt growth and field access.",
+            "outcomes": {
+                "Switchgrass": 0,
+                "Poplar Trees": -1,
+                "Corn Stover": -2,
+            },
+            "lesson": (
+                "Cold weather affects harvest timing, access, and moisture conditions."
+            ),
+        },
+        {
+            "name": "Soil Nutrient Decline",
+            "description": "Repeated biomass removal begins reducing soil quality.",
+            "outcomes": {
+                "Switchgrass": 1,
+                "Poplar Trees": 2,
+                "Corn Stover": -2,
+            },
+            "lesson": (
+                "Removing too much crop residue can reduce soil cover and nutrient recycling."
+            ),
+        },
+    ],
+    "Harvest": [
+        {
+            "name": "Early Frost",
+            "description": "An early frost arrives before the planned harvest.",
+            "outcomes": {
+                "Switchgrass": 1,
+                "Poplar Trees": -1,
+                "Corn Stover": 0,
+            },
+            "lesson": (
+                "Harvest timing affects yield, moisture, and feedstock quality."
+            ),
+        },
+        {
+            "name": "Labor Shortage",
+            "description": "Too few workers and machines are available for harvest.",
+            "outcomes": {
+                "Switchgrass": 0,
+                "Poplar Trees": 1,
+                "Corn Stover": -2,
+            },
+            "lesson": (
+                "Feedstocks have different harvest windows and equipment requirements."
+            ),
+        },
+        {
+            "name": "Ideal Harvest Conditions",
+            "description": "Dry weather creates an excellent harvest window.",
+            "outcomes": {
+                "Switchgrass": 3,
+                "Poplar Trees": 4,
+                "Corn Stover": 3,
+            },
+            "lesson": (
+                "Good harvest conditions reduce losses and preserve usable biomass."
+            ),
+        },
+    ],
+    "Transportation": [
+        {
+            "name": "Road Closure",
+            "description": "A major route to the biorefinery is unavailable.",
+            "outcomes": {
+                "Switchgrass": -1,
+                "Poplar Trees": 0,
+                "Corn Stover": -2,
+            },
+            "lesson": (
+                "Low-density biomass can become expensive to move over long distances."
+            ),
+        },
+        {
+            "name": "Wet Feedstock",
+            "description": "Rain increases feedstock moisture and hauling weight.",
+            "outcomes": {
+                "Switchgrass": 0,
+                "Poplar Trees": -1,
+                "Corn Stover": -2,
+            },
+            "lesson": (
+                "Moisture increases transportation weight and can lower conversion efficiency."
+            ),
+        },
+        {
+            "name": "Efficient Rail Access",
+            "description": "A nearby rail route lowers transportation losses.",
+            "outcomes": {
+                "Switchgrass": 2,
+                "Poplar Trees": 2,
+                "Corn Stover": 3,
+            },
+            "lesson": (
+                "Transportation infrastructure can improve the value of biomass feedstocks."
+            ),
+        },
+    ],
+    "Biorefinery": [
+        {
+            "name": "Equipment Failure",
+            "description": "A processing unit fails during biomass conversion.",
+            "outcomes": {
+                "Switchgrass": -1,
+                "Poplar Trees": -2,
+                "Corn Stover": -1,
+            },
+            "lesson": (
+                "Reliable conversion equipment is necessary to turn biomass into energy."
+            ),
+        },
+        {
+            "name": "Feedstock Quality Problem",
+            "description": "Moisture and particle size vary more than expected.",
+            "outcomes": {
+                "Switchgrass": 1,
+                "Poplar Trees": 0,
+                "Corn Stover": 1,
+            },
+            "lesson": (
+                "Consistent feedstock quality helps a biorefinery operate efficiently."
+            ),
+        },
+        {
+            "name": "High Bioenergy Demand",
+            "description": "Demand for renewable energy increases sharply.",
+            "outcomes": {
+                "Switchgrass": 3,
+                "Poplar Trees": 3,
+                "Corn Stover": 4,
+            },
+            "lesson": (
+                "Market demand can increase the value of multiple biomass feedstocks."
+            ),
+        },
+    ],
+}
+
+
+# ---------------------------------------------------------
+# GAME STATE
+# ---------------------------------------------------------
+
+player = {
+    "name": "",
+    "farm": "",
+    "station": 0,
+    "trees": 8,
+    "plant_uses": {
+        "Switchgrass": 0,
+        "Poplar Trees": 0,
+        "Corn Stover": 0,
+    },
+}
+
+game_state = {
+    "difficulty": "Medium",
+    "turn": 0,
+    "failed_turns": 0,
+    "current_dilemmas": [],
+    "dilemma_index": 0,
+    "current_card": None,
+    "last_plant": None,
+    "turn_tree_change": 0,
+    "last_result": "",
+    "last_lesson": "",
+}
+
+deck = []
+
+
+# ---------------------------------------------------------
+# CORE LOGIC
+# ---------------------------------------------------------
+
+def clear_screen():
+    for widget in root.winfo_children():
+        widget.destroy()
+
+
+def current_stage():
+    return STATIONS[player["station"]]
+
+
+def settings():
+    return DIFFICULTIES[game_state["difficulty"]]
+
+
+def create_deck():
+    new_deck = [
+        {"rank": rank, "suit": suit}
+        for suit in SUITS
+        for rank in RANKS
+    ]
+    random.shuffle(new_deck)
+    return new_deck
+
+
+def draw_playing_card():
+    global deck
+
+    if not deck:
+        deck = create_deck()
+
+    return deck.pop()
+
+
+def card_strength(rank):
+    if rank in ["Ace", "2", "3", "4", "5"]:
+        return 1
+
+    if rank in ["6", "7", "8", "9", "10"]:
+        return 2
+
+    return 3
+
+
+def card_modifier(card):
+    strength = card_strength(card["rank"])
+
+    if card["suit"] == "Hearts":
+        return strength
+
+    if card["suit"] == "Diamonds":
+        return max(1, strength - 1)
+
+    if card["suit"] == "Clubs":
+        return -strength
+
+    return -(strength + 1)
+
+
+def plant_modifier(plant_name, base_result):
+    uses = player["plant_uses"][plant_name]
+    result = base_result
+    note = ""
+
+    if plant_name == "Switchgrass":
+        if result < 0:
+            result += 1
+            note = "Switchgrass resilience reduced the loss by 1 tree."
+
+    elif plant_name == "Poplar Trees":
+        if uses == 0:
+            result -= 1
+            note = "New poplar needed time to establish: -1 tree."
+        else:
+            bonus = min(2, uses)
+            result += bonus
+            note = f"Established poplar added a +{bonus} tree bonus."
+
+    elif plant_name == "Corn Stover":
+        if uses == 0:
+            result += 2
+            note = "First corn-stover use received a +2 tree bonus."
+        elif uses == 1:
+            result += 1
+            note = "Second corn-stover use received a +1 tree bonus."
+        else:
+            penalty = min(2, uses - 1)
+            result -= penalty
+            note = f"Repeated residue removal caused a -{penalty} tree penalty."
+
+    return result, note
+
+
+def farm_resistance_bonus(dilemma_name, result):
+    farm_data = FARMS[player["farm"]]
+
+    if dilemma_name in farm_data["resists"] and result < 0:
+        improved = min(0, result + 2)
+        prevented = improved - result
+
+        return (
+            improved,
+            f"{player['farm']} prevented {prevented} tree loss.",
+        )
+
+    return result, ""
+
+
+def get_current_dilemma():
+    return game_state["current_dilemmas"][game_state["dilemma_index"]]
+
+
+def prepare_turn():
+    current_settings = settings()
+
+    if game_state["turn"] >= current_settings["turn_limit"]:
+        show_lose_screen("You ran out of time before reaching the biorefinery.")
+        return
+
+    game_state["turn"] += 1
+    game_state["dilemma_index"] = 0
+    game_state["current_card"] = None
+    game_state["last_plant"] = None
+    game_state["turn_tree_change"] = 0
+
+    if (
+        game_state["difficulty"] == "Easy"
+        and game_state["turn"] % current_settings["event_every"] != 0
+    ):
+        selected = [NORMAL_CONDITIONS]
+    else:
+        available = DILEMMAS[current_stage()]
+        count = min(current_settings["event_count"], len(available))
+        selected = random.sample(available, count)
+
+    game_state["current_dilemmas"] = selected
+    show_dilemma_screen()
+
+
+def check_tree_collapse():
+    if player["trees"] <= 0:
+        show_lose_screen("Your biomass supply collapsed to zero trees.")
+        return True
+
+    return False
+
+
+def required_trees_for_current_stage():
+    return ADVANCE_REQUIREMENTS[game_state["difficulty"]][current_stage()]
+
+
+def production_die_change(plant_name, roll):
+    return DICE_YIELDS[plant_name][roll]
+
+
+def draw_die_face(canvas, value):
+    """Draw a real six-sided die using a Tkinter Canvas."""
+    canvas.delete("all")
+
+    margin = 12
+    size = 170
+    canvas.create_rectangle(
+        margin,
+        margin,
+        size - margin,
+        size - margin,
+        fill="white",
+        outline="#222222",
+        width=4,
+    )
+
+    positions = {
+        "top_left": (48, 48),
+        "top_right": (122, 48),
+        "middle_left": (48, 85),
+        "center": (85, 85),
+        "middle_right": (122, 85),
+        "bottom_left": (48, 122),
+        "bottom_right": (122, 122),
+    }
+
+    pips = {
+        1: ["center"],
+        2: ["top_left", "bottom_right"],
+        3: ["top_left", "center", "bottom_right"],
+        4: ["top_left", "top_right", "bottom_left", "bottom_right"],
+        5: ["top_left", "top_right", "center", "bottom_left", "bottom_right"],
+        6: [
+            "top_left",
+            "top_right",
+            "middle_left",
+            "middle_right",
+            "bottom_left",
+            "bottom_right",
+        ],
+    }
+
+    radius = 10
+    for position_name in pips[value]:
+        x, y = positions[position_name]
+        canvas.create_oval(
+            x - radius,
+            y - radius,
+            x + radius,
+            y + radius,
+            fill="#111111",
+            outline="#111111",
+        )
+
+
+# ---------------------------------------------------------
+# MAIN MENU
+# ---------------------------------------------------------
+
+def show_main_menu():
+    clear_screen()
+    root.configure(bg="#f4f1df")
+
+    tk.Label(
+        root,
+        text="BIOCARD GAME",
+        font=("Georgia", 34, "bold"),
+        bg="#f4f1df",
+        fg="#3f7d44",
+    ).pack(pady=(60, 10))
+
+    tk.Label(
+        root,
+        text="Draw a card. Choose a plant. Roll the die.",
+        font=("Arial", 16),
+        bg="#f4f1df",
+        fg="#4d5b45",
+    ).pack(pady=10)
+
+    tk.Button(
+        root,
+        text="START GAME",
+        font=("Arial", 16, "bold"),
+        width=22,
+        height=2,
+        bg="#91c788",
+        command=show_setup_screen,
+    ).pack(pady=24)
+
+    tk.Button(
+        root,
+        text="HOW TO PLAY",
+        font=("Arial", 14),
+        width=22,
+        command=show_rules,
+    ).pack(pady=8)
+
+    tk.Button(
+        root,
+        text="QUIT",
+        font=("Arial", 14),
+        width=22,
+        command=root.destroy,
+    ).pack(pady=8)
+
+
+# ---------------------------------------------------------
+# RULES
+# ---------------------------------------------------------
+
+def draw_rules_visual(parent):
+    """Draw a simple picture-like guide to the game turn."""
+    visual = tk.Frame(
+        parent,
+        bg="#e7f0df",
+        bd=3,
+        relief="ridge",
+    )
+    visual.pack(fill="x", padx=18, pady=12)
+
+    tk.Label(
+        visual,
+        text="ONE TURN AT A GLANCE",
+        font=("Georgia", 16, "bold"),
+        bg="#e7f0df",
+        fg="#31572c",
+    ).pack(pady=(10, 7))
+
+    steps = tk.Frame(visual, bg="#e7f0df")
+    steps.pack(pady=(0, 12))
+
+    step_data = [
+        ("1", "DILEMMA", "?"),
+        ("2", "DRAW CARD", "♥ ♦ ♣ ♠"),
+        ("3", "CHOOSE PLANT", "SW  PT  CS"),
+        ("4", "ROLL DIE", "●  ●●  ●●●"),
+        ("5", "CHECK TREES", "ADVANCE"),
+    ]
+
+    for column, (number, title, picture) in enumerate(step_data):
+        card = tk.Frame(
+            steps,
+            width=105,
+            height=105,
+            bg="white",
+            bd=2,
+            relief="raised",
+        )
+        card.grid(row=0, column=column * 2, padx=4)
+        card.grid_propagate(False)
+
+        tk.Label(
+            card,
+            text=number,
+            font=("Arial", 10, "bold"),
+            bg="#31572c",
+            fg="white",
+            width=3,
+        ).pack(pady=(6, 3))
+
+        tk.Label(
+            card,
+            text=picture,
+            font=("Arial", 13, "bold"),
+            bg="white",
+            wraplength=95,
+        ).pack(pady=4)
+
+        tk.Label(
+            card,
+            text=title,
+            font=("Arial", 9, "bold"),
+            bg="white",
+            wraplength=95,
+        ).pack(pady=2)
+
+        if column < len(step_data) - 1:
+            tk.Label(
+                steps,
+                text="→",
+                font=("Arial", 18, "bold"),
+                bg="#e7f0df",
+                fg="#31572c",
+            ).grid(row=0, column=column * 2 + 1, padx=1)
+
+
+def add_rules_heading(parent, text):
+    tk.Label(
+        parent,
+        text=text,
+        font=("Georgia", 17, "bold"),
+        bg="#f4f1df",
+        fg="#31572c",
+        anchor="w",
+    ).pack(fill="x", padx=24, pady=(16, 5))
+
+
+def add_rules_paragraph(parent, text):
+    tk.Label(
+        parent,
+        text=text,
+        font=("Arial", 12),
+        bg="#f4f1df",
+        justify="left",
+        anchor="w",
+        wraplength=760,
+    ).pack(fill="x", padx=32, pady=3)
+
+
+def add_requirement_table(parent):
+    add_rules_heading(parent, "TREE REQUIREMENTS")
+
+    add_rules_paragraph(
+        parent,
+        (
+            "After rolling the production die, compare your tree total with "
+            "the requirement for your current stage. Meeting the requirement "
+            "moves you to the next stage. Otherwise, you remain there."
+        ),
+    )
+
+    table = tk.Frame(parent, bg="#f4f1df")
+    table.pack(padx=24, pady=9)
+
+    headings = ["Difficulty"] + STATIONS
+
+    for column, heading in enumerate(headings):
+        tk.Label(
+            table,
+            text=heading,
+            font=("Arial", 10, "bold"),
+            bg="#31572c",
+            fg="white",
+            width=15 if column else 10,
+            height=2,
+            relief="ridge",
+            bd=1,
+        ).grid(row=0, column=column, sticky="nsew")
+
+    for row, difficulty in enumerate(["Easy", "Medium", "Hard"], start=1):
+        values = [difficulty] + [
+            str(ADVANCE_REQUIREMENTS[difficulty][stage])
+            for stage in STATIONS
+        ]
+
+        for column, value in enumerate(values):
+            tk.Label(
+                table,
+                text=value,
+                font=("Arial", 10),
+                bg="white" if row % 2 else "#e7f0df",
+                width=15 if column else 10,
+                height=2,
+                relief="ridge",
+                bd=1,
+            ).grid(row=row, column=column, sticky="nsew")
+
+
+def create_scrollable_rules(parent, close_command, title):
+    """Create rules with a scrollbar and mouse-wheel support."""
+    parent.configure(bg="#f4f1df")
+
+    tk.Label(
+        parent,
+        text=title,
+        font=("Georgia", 27, "bold"),
+        bg="#f4f1df",
+        fg="#3f7d44",
+    ).pack(pady=(13, 2))
+
+    tk.Label(
+        parent,
+        text="Use the mouse wheel or the scroll bar to read everything.",
+        font=("Arial", 10, "italic"),
+        bg="#f4f1df",
+        fg="#4d5b45",
+    ).pack(pady=(0, 7))
+
+    container = tk.Frame(parent, bg="#f4f1df")
+    container.pack(fill="both", expand=True, padx=10)
+
+    canvas = tk.Canvas(
+        container,
+        bg="#f4f1df",
+        highlightthickness=0,
+    )
+    scrollbar = ttk.Scrollbar(
+        container,
+        orient="vertical",
+        command=canvas.yview,
+    )
+
+    content = tk.Frame(canvas, bg="#f4f1df")
+    content_window = canvas.create_window(
+        (0, 0),
+        window=content,
+        anchor="nw",
+    )
+
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    def update_scroll_region(_event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def resize_content(event):
+        canvas.itemconfigure(content_window, width=event.width)
+
+    content.bind("<Configure>", update_scroll_region)
+    canvas.bind("<Configure>", resize_content)
+
+    def on_mousewheel(event):
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+    draw_rules_visual(content)
+
+    add_rules_heading(content, "TURN ORDER")
+    add_rules_paragraph(
+        content,
+        (
+            "1. Read the current stage-based dilemma.\n"
+            "2. Draw one card from the standard 52-card deck.\n"
+            "3. Choose Switchgrass, Poplar Trees, or Corn Stover.\n"
+            "4. The dilemma, card, farm, and plant change your trees.\n"
+            "5. Roll the production die. The chosen plant determines the die effect.\n"
+            "6. Compare your trees with the requirement for the current stage."
+        ),
+    )
+
+    add_rules_heading(content, "PLAYING CARDS")
+    add_rules_paragraph(
+        content,
+        (
+            "♥ Hearts and ♦ Diamonds usually help your tree total.\n"
+            "♣ Clubs and ♠ Spades usually hurt your tree total.\n"
+            "Higher card ranks create stronger effects."
+        ),
+    )
+
+    add_rules_heading(content, "THE THREE PLANT CARDS")
+    add_rules_paragraph(
+        content,
+        (
+            "SWITCHGRASS — Reliable. It reduces negative results by 1 tree.\n\n"
+            "POPLAR TREES — Slow at first, but established poplar becomes "
+            "stronger after repeated use.\n\n"
+            "CORN STOVER — Strong during its first uses, but repeated residue "
+            "removal causes declining returns."
+        ),
+    )
+
+    add_rules_heading(content, "PRODUCTION DIE")
+    add_rules_paragraph(
+        content,
+        (
+            "Switchgrass: rolls 1–2 = +0, 3–4 = +1, 5–6 = +2.\n"
+            "Poplar Trees: roll 1 = -2, 2 = -1, 3–4 = +1, 5 = +3, 6 = +4.\n"
+            "Corn Stover: roll 1 = -2, 2 = +0, 3–4 = +2, 5–6 = +3."
+        ),
+    )
+
+    add_rules_heading(content, "DIFFICULTY")
+    add_rules_paragraph(
+        content,
+        (
+            "EASY — One major dilemma every two turns.\n"
+            "MEDIUM — One dilemma every turn.\n"
+            "HARD — Two dilemmas every turn."
+        ),
+    )
+
+    add_requirement_table(content)
+
+    add_rules_heading(content, "WAYS TO LOSE")
+    add_rules_paragraph(
+        content,
+        (
+            "• Your tree total reaches zero.\n"
+            "• You exceed the turn limit.\n"
+            "• You suffer too many losing turns in a row.\n"
+            "• You reach the biorefinery without enough trees."
+        ),
+    )
+
+    tk.Label(
+        content,
+        text="",
+        bg="#f4f1df",
+        height=2,
+    ).pack()
+
+    tk.Button(
+        parent,
+        text="CLOSE" if isinstance(parent, tk.Toplevel) else "BACK",
+        font=("Arial", 13, "bold"),
+        width=16,
+        bg="#91c788",
+        command=lambda: (
+            canvas.unbind_all("<MouseWheel>"),
+            close_command(),
+        ),
+    ).pack(pady=10)
+
+
+def show_rules():
+    clear_screen()
+    create_scrollable_rules(
+        root,
+        show_main_menu,
+        "HOW TO PLAY",
+    )
+
+
+# ---------------------------------------------------------
+# QUICK RULES POPUP
+# ---------------------------------------------------------
+
+def show_quick_rules():
+    """Open scrollable rules without resetting the game."""
+    popup = tk.Toplevel(root)
+    popup.title("BioCard Quick Rules")
+    popup.geometry("720x720")
+    popup.minsize(620, 600)
+    popup.configure(bg="#f4f1df")
+    popup.transient(root)
+    popup.grab_set()
+
+    create_scrollable_rules(
+        popup,
+        popup.destroy,
+        "QUICK RULES",
+    )
+
+
+def add_quick_rules_button():
+    """Place a small rules button at the upper-right of a game screen."""
+    tk.Button(
+        root,
+        text="RULES",
+        font=("Arial", 10, "bold"),
+        width=10,
+        bg="#dbe8c6",
+        command=show_quick_rules,
+    ).place(
+        relx=0.98,
+        rely=0.02,
+        anchor="ne",
+    )
+
+
+# ---------------------------------------------------------
+# SETUP
+# ---------------------------------------------------------
+
+def show_setup_screen():
+    clear_screen()
+    root.configure(bg="#e8f5e9")
+
+    tk.Label(
+        root,
+        text="CREATE YOUR FARM",
+        font=("Georgia", 28, "bold"),
+        bg="#e8f5e9",
+        fg="#31572c",
+    ).pack(pady=18)
+
+    tk.Label(
+        root,
+        text="Player name:",
+        font=("Arial", 14),
+        bg="#e8f5e9",
+    ).pack()
+
+    name_entry = tk.Entry(
+        root,
+        font=("Arial", 14),
+        width=26,
+        justify="center",
+    )
+    name_entry.pack(pady=7)
+
+    tk.Label(
+        root,
+        text="Choose your farm:",
+        font=("Arial", 14),
+        bg="#e8f5e9",
+    ).pack(pady=(10, 4))
+
+    farm_box = ttk.Combobox(
+        root,
+        values=list(FARMS.keys()),
+        font=("Arial", 13),
+        width=29,
+        state="readonly",
+    )
+    farm_box.pack(pady=6)
+    farm_box.current(0)
+
+    farm_description = tk.Label(
+        root,
+        text=FARMS[farm_box.get()]["description"],
+        font=("Arial", 11),
+        bg="#e8f5e9",
+        fg="#4d5b45",
+    )
+    farm_description.pack(pady=3)
+
+    def update_farm_description(_event=None):
+        farm_description.config(
+            text=FARMS[farm_box.get()]["description"]
+        )
+
+    farm_box.bind("<<ComboboxSelected>>", update_farm_description)
+
+    tk.Label(
+        root,
+        text="Choose difficulty:",
+        font=("Arial", 14),
+        bg="#e8f5e9",
+    ).pack(pady=(10, 4))
+
+    difficulty_box = ttk.Combobox(
+        root,
+        values=list(DIFFICULTIES.keys()),
+        font=("Arial", 13),
+        width=29,
+        state="readonly",
+    )
+    difficulty_box.pack(pady=6)
+    difficulty_box.current(1)
+
+    difficulty_description = tk.Label(
+        root,
+        text=DIFFICULTIES[difficulty_box.get()]["description"],
+        font=("Arial", 11),
+        bg="#e8f5e9",
+        fg="#4d5b45",
+        wraplength=680,
+        justify="center",
+    )
+    difficulty_description.pack(pady=5)
+
+    def update_difficulty_description(_event=None):
+        difficulty_description.config(
+            text=DIFFICULTIES[difficulty_box.get()]["description"]
+        )
+
+    difficulty_box.bind(
+        "<<ComboboxSelected>>",
+        update_difficulty_description,
+    )
+
+    def begin_game():
+        name = name_entry.get().strip()
+
+        if not name:
+            messagebox.showwarning(
+                "Missing Name",
+                "Please enter your name.",
+            )
+            return
+
+        selected_difficulty = difficulty_box.get()
+        selected_settings = DIFFICULTIES[selected_difficulty]
+
+        player["name"] = name
+        player["farm"] = farm_box.get()
+        player["station"] = 0
+        player["trees"] = selected_settings["starting_trees"]
+        player["plant_uses"] = {
+            "Switchgrass": 0,
+            "Poplar Trees": 0,
+            "Corn Stover": 0,
+        }
+
+        game_state["difficulty"] = selected_difficulty
+        game_state["turn"] = 0
+        game_state["failed_turns"] = 0
+        game_state["last_plant"] = None
+        game_state["last_result"] = ""
+        game_state["last_lesson"] = ""
+
+        global deck
+        deck = create_deck()
+
+        prepare_turn()
+
+    tk.Button(
+        root,
+        text="BEGIN",
+        font=("Arial", 15, "bold"),
+        width=20,
+        height=2,
+        bg="#91c788",
+        command=begin_game,
+    ).pack(pady=15)
+
+    tk.Button(
+        root,
+        text="BACK",
+        font=("Arial", 12),
+        width=16,
+        command=show_main_menu,
+    ).pack()
+
+
+# ---------------------------------------------------------
+# DILEMMA, PLAYING CARD, AND PLANT CARDS
+# ---------------------------------------------------------
+
+def show_dilemma_screen():
+    clear_screen()
+    root.configure(bg="#f4f1df")
+
+    add_quick_rules_button()
+
+    dilemma = get_current_dilemma()
+    dilemma_number = game_state["dilemma_index"] + 1
+    dilemma_total = len(game_state["current_dilemmas"])
+    current_settings = settings()
+
+    tk.Label(
+        root,
+        text="BIOCARD GAME",
+        font=("Georgia", 23, "bold"),
+        bg="#f4f1df",
+        fg="#3f7d44",
+    ).pack(pady=(10, 2))
+
+    tk.Label(
+        root,
+        text=(
+            f"{player['name']} — {player['farm']} — "
+            f"{game_state['difficulty']} Mode"
+        ),
+        font=("Arial", 12, "bold"),
+        bg="#f4f1df",
+    ).pack(pady=2)
+
+    status_frame = tk.Frame(
+        root,
+        bg="#dbe8c6",
+        bd=3,
+        relief="ridge",
+    )
+    status_frame.pack(pady=7, padx=20, fill="x")
+
+    tk.Label(
+        status_frame,
+        text=f"Stage: {current_stage()}",
+        font=("Arial", 12, "bold"),
+        bg="#dbe8c6",
+    ).pack(side="left", padx=18, pady=8)
+
+    tk.Label(
+        status_frame,
+        text=f"Turn: {game_state['turn']}/{current_settings['turn_limit']}",
+        font=("Arial", 12, "bold"),
+        bg="#dbe8c6",
+    ).pack(side="left", padx=18, pady=8)
+
+    tk.Label(
+        status_frame,
+        text=(
+            f"Failed turns: {game_state['failed_turns']}/"
+            f"{current_settings['failed_turn_limit']}"
+        ),
+        font=("Arial", 12, "bold"),
+        bg="#dbe8c6",
+    ).pack(side="left", padx=18, pady=8)
+
+    tk.Label(
+        status_frame,
+        text=f"Need: {required_trees_for_current_stage()}",
+        font=("Arial", 12, "bold"),
+        bg="#dbe8c6",
+    ).pack(side="right", padx=12, pady=8)
+
+    tk.Label(
+        status_frame,
+        text=f"Trees: {player['trees']}",
+        font=("Arial", 12, "bold"),
+        bg="#dbe8c6",
+    ).pack(side="right", padx=12, pady=8)
+
+    progress_frame = tk.Frame(root, bg="#f4f1df")
+    progress_frame.pack(pady=4)
+
+    for index, station in enumerate(STATIONS):
+        background = "#91c788" if index == player["station"] else "#eeeeee"
+        requirement = ADVANCE_REQUIREMENTS[
+            game_state["difficulty"]
+        ][station]
+
+        tk.Label(
+            progress_frame,
+            text=(
+                f"{index + 1}\n"
+                f"{station}\n"
+                f"Need {requirement} trees"
+            ),
+            width=15,
+            height=4,
+            font=("Arial", 8, "bold"),
+            relief="ridge",
+            bd=2,
+            bg=background,
+        ).grid(row=0, column=index, padx=3)
+
+    dilemma_frame = tk.Frame(
+        root,
+        bg="#fff8dc",
+        bd=3,
+        relief="ridge",
+    )
+    dilemma_frame.pack(pady=7, padx=40, fill="x")
+
+    if dilemma_total > 1:
+        heading = f"Dilemma {dilemma_number} of {dilemma_total}"
+    else:
+        heading = "This Turn's Dilemma"
+
+    tk.Label(
+        dilemma_frame,
+        text=heading,
+        font=("Arial", 10, "bold"),
+        bg="#fff8dc",
+        fg="#7a5c00",
+    ).pack(pady=(6, 1))
+
+    tk.Label(
+        dilemma_frame,
+        text=dilemma["name"],
+        font=("Georgia", 19, "bold"),
+        bg="#fff8dc",
+        fg="#654321",
+    ).pack(pady=1)
+
+    tk.Label(
+        dilemma_frame,
+        text=dilemma["description"],
+        font=("Arial", 12),
+        bg="#fff8dc",
+        wraplength=820,
+        justify="center",
+    ).pack(pady=(1, 7))
+
+    card_frame = tk.Frame(
+        root,
+        width=320,
+        height=115,
+        bg="white",
+        bd=4,
+        relief="ridge",
+    )
+    card_frame.pack(pady=5)
+    card_frame.pack_propagate(False)
+
+    card_label = tk.Label(
+        card_frame,
+        text="Draw a playing card",
+        font=("Georgia", 14, "bold"),
+        bg="white",
+        justify="center",
+    )
+    card_label.pack(expand=True)
+
+    draw_button = tk.Button(
+        root,
+        text="DRAW PLAYING CARD",
+        font=("Arial", 11, "bold"),
+        width=22,
+        bg="#ffd782",
+    )
+    draw_button.pack(pady=4)
+
+    tk.Label(
+        root,
+        text="Then choose one plant card:",
+        font=("Arial", 12, "bold"),
+        bg="#f4f1df",
+    ).pack(pady=(3, 3))
+
+    plant_cards_frame = tk.Frame(root, bg="#f4f1df")
+    plant_cards_frame.pack(pady=2)
+
+    plant_buttons = []
+
+    def choose_plant(plant_name):
+        if game_state["current_card"] is None:
+            messagebox.showwarning(
+                "Draw First",
+                "Draw a playing card before choosing a plant.",
+            )
+            return
+
+        base_result = dilemma["outcomes"][plant_name]
+
+        plant_result, plant_note = plant_modifier(
+            plant_name,
+            base_result,
+        )
+
+        farm_result, farm_note = farm_resistance_bonus(
+            dilemma["name"],
+            plant_result,
+        )
+
+        playing_card_change = card_modifier(
+            game_state["current_card"]
+        )
+
+        final_change = farm_result + playing_card_change
+
+        player["plant_uses"][plant_name] += 1
+        game_state["last_plant"] = plant_name
+        player["trees"] = max(
+            0,
+            player["trees"] + final_change,
+        )
+        game_state["turn_tree_change"] += final_change
+
+        if final_change > 0:
+            change_text = f"Gain {final_change} trees."
+        elif final_change < 0:
+            change_text = f"Lose {abs(final_change)} trees."
+        else:
+            change_text = "No trees gained or lost."
+
+        card = game_state["current_card"]
+        card_text = (
+            f"{card['rank']} of {card['suit']} "
+            f"({playing_card_change:+d})"
+        )
+
+        result_lines = [
+            f"You chose {plant_name}.",
+            f"Playing card: {card_text}",
+            change_text,
+        ]
+
+        if plant_note:
+            result_lines.append(plant_note)
+
+        if farm_note:
+            result_lines.append(farm_note)
+
+        game_state["last_result"] = "\n".join(result_lines)
+        game_state["last_lesson"] = dilemma["lesson"]
+        game_state["current_card"] = None
+
+        if check_tree_collapse():
+            return
+
+        show_choice_result_screen()
+
+    for column, plant_name in enumerate(PLANTS):
+        plant = PLANTS[plant_name]
+        uses = player["plant_uses"][plant_name]
+
+        plant_frame = tk.Frame(
+            plant_cards_frame,
+            width=270,
+            height=155,
+            bg="white",
+            bd=4,
+            relief="raised",
+        )
+        plant_frame.grid(row=0, column=column, padx=8)
+        plant_frame.grid_propagate(False)
+
+        tk.Label(
+            plant_frame,
+            text=plant["icon"],
+            font=("Arial", 19, "bold"),
+            bg="white",
+        ).pack(pady=(5, 0))
+
+        tk.Label(
+            plant_frame,
+            text=plant_name,
+            font=("Georgia", 14, "bold"),
+            bg="white",
+        ).pack()
+
+        tk.Label(
+            plant_frame,
+            text=plant["summary"],
+            font=("Arial", 9, "italic"),
+            bg="white",
+            fg="#4d5b45",
+        ).pack(pady=1)
+
+        tk.Label(
+            plant_frame,
+            text=f"Used {uses} time(s)",
+            font=("Arial", 9),
+            bg="white",
+        ).pack(pady=1)
+
+        button = tk.Button(
+            plant_frame,
+            text="PLAY THIS CARD",
+            font=("Arial", 9, "bold"),
+            bg="#cccccc",
+            state="disabled",
+            command=lambda name=plant_name: choose_plant(name),
+        )
+        button.pack(pady=5)
+        plant_buttons.append(button)
+
+    def draw_card_action():
+        if game_state["current_card"] is not None:
+            return
+
+        card = draw_playing_card()
+        game_state["current_card"] = card
+
+        symbol = SUIT_SYMBOLS[card["suit"]]
+        color = "red" if card["suit"] in ["Hearts", "Diamonds"] else "black"
+
+        card_label.config(
+            text=f"{card['rank']}\n{symbol} {card['suit']}",
+            fg=color,
+        )
+
+        draw_button.config(state="disabled")
+
+        for button in plant_buttons:
+            button.config(
+                state="normal",
+                bg="#91c788",
+            )
+
+    draw_button.config(command=draw_card_action)
+
+    tk.Button(
+        root,
+        text="MAIN MENU",
+        font=("Arial", 9),
+        width=14,
+        command=show_main_menu,
+    ).pack(pady=6)
+
+
+# ---------------------------------------------------------
+# CHOICE RESULT
+# ---------------------------------------------------------
+
+def show_choice_result_screen():
+    clear_screen()
+    root.configure(bg="#eef5e8")
+
+    add_quick_rules_button()
+
+    tk.Label(
+        root,
+        text="DILEMMA RESULT",
+        font=("Georgia", 28, "bold"),
+        bg="#eef5e8",
+        fg="#31572c",
+    ).pack(pady=(50, 10))
+
+    tk.Label(
+        root,
+        text=game_state["last_result"],
+        font=("Arial", 16, "bold"),
+        bg="#eef5e8",
+        justify="center",
+        wraplength=780,
+    ).pack(pady=10)
+
+    tk.Label(
+        root,
+        text=f"Current trees: {player['trees']}",
+        font=("Arial", 19, "bold"),
+        bg="#eef5e8",
+        fg="#31572c",
+    ).pack(pady=8)
+
+    lesson_frame = tk.Frame(
+        root,
+        bg="#fff8dc",
+        bd=3,
+        relief="ridge",
+    )
+    lesson_frame.pack(pady=14, padx=100, fill="x")
+
+    tk.Label(
+        lesson_frame,
+        text="Bioeconomy Note",
+        font=("Georgia", 16, "bold"),
+        bg="#fff8dc",
+        fg="#654321",
+    ).pack(pady=(9, 3))
+
+    tk.Label(
+        lesson_frame,
+        text=game_state["last_lesson"],
+        font=("Arial", 12),
+        bg="#fff8dc",
+        wraplength=720,
+        justify="center",
+    ).pack(pady=(3, 10))
+
+    def continue_after_result():
+        game_state["dilemma_index"] += 1
+
+        if game_state["dilemma_index"] < len(game_state["current_dilemmas"]):
+            game_state["current_card"] = None
+            show_dilemma_screen()
+        else:
+            finish_turn_before_dice()
+
+    if (
+        game_state["dilemma_index"] + 1
+        < len(game_state["current_dilemmas"])
+    ):
+        button_text = "NEXT DILEMMA"
+    elif current_stage() == "Biorefinery":
+        button_text = "CHECK FINAL RESULT"
+    else:
+        button_text = "ROLL PRODUCTION DIE"
+
+    tk.Button(
+        root,
+        text=button_text,
+        font=("Arial", 15, "bold"),
+        width=24,
+        height=2,
+        bg="#91c788",
+        command=continue_after_result,
+    ).pack(pady=15)
+
+
+def finish_turn_before_dice():
+    if game_state["last_plant"] is None:
+        show_lose_screen("No plant was selected for the production die.")
+        return
+
+    show_dice_screen()
+
+
+# ---------------------------------------------------------
+# DICE
+# ---------------------------------------------------------
+
+def show_dice_screen():
+    clear_screen()
+    root.configure(bg="#f4f1df")
+
+    add_quick_rules_button()
+
+    plant_name = game_state["last_plant"]
+    required_trees = required_trees_for_current_stage()
+
+    tk.Label(
+        root,
+        text="ROLL THE PRODUCTION DIE",
+        font=("Georgia", 29, "bold"),
+        bg="#f4f1df",
+        fg="#3f7d44",
+    ).pack(pady=(42, 10))
+
+    tk.Label(
+        root,
+        text=(
+            f"Production plant: {plant_name}\n"
+            f"Current trees: {player['trees']} | "
+            f"Needed to advance: {required_trees}"
+        ),
+        font=("Arial", 15, "bold"),
+        bg="#f4f1df",
+        justify="center",
+    ).pack(pady=6)
+
+    profile_text = {
+        "Switchgrass": "Roll 1–2: +0 | 3–4: +1 | 5–6: +2",
+        "Poplar Trees": "Roll 1: -2 | 2: -1 | 3–4: +1 | 5: +3 | 6: +4",
+        "Corn Stover": "Roll 1: -2 | 2: +0 | 3–4: +2 | 5–6: +3",
+    }[plant_name]
+
+    tk.Label(
+        root,
+        text=profile_text,
+        font=("Arial", 12),
+        bg="#f4f1df",
+        fg="#4d5b45",
+    ).pack(pady=4)
+
+    dice_canvas = tk.Canvas(
+        root,
+        width=170,
+        height=170,
+        bg="#f4f1df",
+        highlightthickness=0,
+    )
+    dice_canvas.pack(pady=8)
+    draw_die_face(dice_canvas, 1)
+
+    result_label = tk.Label(
+        root,
+        text="Roll to determine this turn's biomass production.",
+        font=("Arial", 15, "bold"),
+        bg="#f4f1df",
+        justify="center",
+        wraplength=780,
+    )
+    result_label.pack(pady=8)
+
+    continue_button = tk.Button(
+        root,
+        text="CONTINUE",
+        font=("Arial", 14, "bold"),
+        width=22,
+        bg="#91c788",
+        state="disabled",
+    )
+    continue_button.pack(pady=10)
+
+    roll_button = tk.Button(
+        root,
+        text="ROLL PRODUCTION DIE",
+        font=("Arial", 15, "bold"),
+        width=22,
+        height=2,
+        bg="#ffd782",
+    )
+    roll_button.pack(pady=7)
+
+    def continue_after_roll():
+        current_settings = settings()
+
+        if player["trees"] <= 0:
+            show_lose_screen("Your biomass supply collapsed to zero trees.")
+            return
+
+        if game_state["turn_tree_change"] < 0:
+            game_state["failed_turns"] += 1
+        else:
+            game_state["failed_turns"] = 0
+
+        if game_state["failed_turns"] >= current_settings["failed_turn_limit"]:
+            show_lose_screen(
+                f"You suffered {current_settings['failed_turn_limit']} "
+                "losing turns in a row."
+            )
+            return
+
+        if current_stage() == "Biorefinery":
+            if player["trees"] >= required_trees:
+                show_win_screen()
+            else:
+                show_lose_screen(
+                    "The biorefinery could not operate because you finished with "
+                    f"fewer than {required_trees} trees."
+                )
+            return
+
+        if player["trees"] >= required_trees:
+            player["station"] += 1
+
+        if game_state["turn"] >= current_settings["turn_limit"]:
+            show_lose_screen(
+                "You reached the turn limit before completing the journey."
+            )
+            return
+
+        prepare_turn()
+
+    def roll_die():
+        roll = random.randint(1, 6)
+        draw_die_face(dice_canvas, roll)
+
+        tree_change = production_die_change(plant_name, roll)
+        player["trees"] = max(0, player["trees"] + tree_change)
+        game_state["turn_tree_change"] += tree_change
+
+        if tree_change > 0:
+            production_text = f"{plant_name} produced +{tree_change} trees."
+        elif tree_change < 0:
+            production_text = f"{plant_name} lost {abs(tree_change)} trees."
+        else:
+            production_text = f"{plant_name} produced no additional trees."
+
+        if current_stage() == "Biorefinery":
+            if player["trees"] >= required_trees:
+                gate_text = (
+                    f"You now have {player['trees']} trees, enough to operate "
+                    "the biorefinery."
+                )
+            else:
+                gate_text = (
+                    f"You now have {player['trees']} trees, but the biorefinery "
+                    f"requires {required_trees}."
+                )
+        elif player["trees"] >= required_trees:
+            next_station = STATIONS[player["station"] + 1]
+            gate_text = (
+                f"Requirement met: {player['trees']}/{required_trees}. "
+                f"You will advance to {next_station}."
+            )
+        else:
+            gate_text = (
+                f"Requirement not met: {player['trees']}/{required_trees}. "
+                f"You will remain at {current_stage()}."
+            )
+
+        result_label.config(
+            text=(
+                f"You rolled {roll}.\n"
+                f"{production_text}\n"
+                f"{gate_text}"
+            )
+        )
+
+        roll_button.config(state="disabled")
+        continue_button.config(
+            state="normal",
+            command=continue_after_roll,
+        )
+
+    roll_button.config(command=roll_die)
+
+
+# ---------------------------------------------------------
+# END SCREENS
+# ---------------------------------------------------------
+
+def show_win_screen():
+    clear_screen()
+    root.configure(bg="#e8f5e9")
+
+    tk.Label(
+        root,
+        text="YOU WIN!",
+        font=("Georgia", 36, "bold"),
+        bg="#e8f5e9",
+        fg="#31572c",
+    ).pack(pady=(75, 15))
+
+    tk.Label(
+        root,
+        text=f"{player['name']} successfully supplied the biorefinery.",
+        font=("Arial", 18, "bold"),
+        bg="#e8f5e9",
+    ).pack(pady=10)
+
+    tk.Label(
+        root,
+        text=f"Final trees: {player['trees']}",
+        font=("Arial", 25, "bold"),
+        bg="#e8f5e9",
+        fg="#31572c",
+    ).pack(pady=18)
+
+    tk.Label(
+        root,
+        text=(
+            f"Difficulty: {game_state['difficulty']}\n"
+            f"Turns used: {game_state['turn']}"
+        ),
+        font=("Arial", 15),
+        bg="#e8f5e9",
+        justify="center",
+    ).pack(pady=8)
+
+    end_buttons()
+
+
+def show_lose_screen(reason):
+    clear_screen()
+    root.configure(bg="#f8e7e7")
+
+    tk.Label(
+        root,
+        text="GAME OVER",
+        font=("Georgia", 36, "bold"),
+        bg="#f8e7e7",
+        fg="#8b2f2f",
+    ).pack(pady=(75, 15))
+
+    tk.Label(
+        root,
+        text=reason,
+        font=("Arial", 18, "bold"),
+        bg="#f8e7e7",
+        wraplength=720,
+        justify="center",
+    ).pack(pady=14)
+
+    tk.Label(
+        root,
+        text=(
+            f"Trees remaining: {player['trees']}\n"
+            f"Stage reached: {current_stage()}\n"
+            f"Turns used: {game_state['turn']}"
+        ),
+        font=("Arial", 15),
+        bg="#f8e7e7",
+        justify="center",
+    ).pack(pady=14)
+
+    end_buttons()
+
+
+def end_buttons():
+    tk.Button(
+        root,
+        text="PLAY AGAIN",
+        font=("Arial", 15, "bold"),
+        width=20,
+        bg="#91c788",
+        command=show_setup_screen,
+    ).pack(pady=13)
+
+    tk.Button(
+        root,
+        text="MAIN MENU",
+        font=("Arial", 14),
+        width=20,
+        command=show_main_menu,
+    ).pack(pady=5)
+
+
+# ---------------------------------------------------------
+# CREATE WINDOW
+# ---------------------------------------------------------
+
+root = tk.Tk()
+root.title("BioCard Game")
+root.geometry("1050x800")
+root.resizable(False, False)
+
+show_main_menu()
+root.mainloop()
